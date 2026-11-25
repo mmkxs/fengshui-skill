@@ -1,0 +1,257 @@
+{
+  "schema": "spatial-fengshui.scene",
+  "version": 1,
+  "resourceCode": "synthetic-room",
+  "spaceType": "residential",
+  "frame": {
+    "name": "y-up-meters",
+    "unit": "m",
+    "up": "Y"
+  },
+  "occlusionCoverage": "reviewed",
+  "assumptions": [
+    "合成测试场景，几何及通风量均为示例工况。"
+  ],
+  "rooms": [
+    {
+      "id": "room-1",
+      "name": "示例卧室",
+      "function": "bedroom",
+      "areaM2": 20,
+      "floorY": 0,
+      "ceilingHeightM": 2.8,
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:room"
+      ],
+      "ventilation": {
+        "flowM3h": 120,
+        "basis": "scenario",
+        "evidenceRef": "合成固定风量对比工况"
+      },
+      "polygonXZ": [
+        [
+          0,
+          0
+        ],
+        [
+          5,
+          0
+        ],
+        [
+          5,
+          4
+        ],
+        [
+          0,
+          4
+        ]
+      ]
+    }
+  ],
+  "objects": [
+    {
+      "id": "bed-1",
+      "type": "bed",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:bed-1"
+      ],
+      "box": {
+        "center": [
+          2,
+          0.3,
+          2.5
+        ],
+        "size": [
+          2,
+          0.6,
+          2
+        ],
+        "yawRad": 0
+      },
+      "reviewPoint": [
+        2,
+        0.8,
+        2.5
+      ],
+      "headPoint": [
+        2,
+        0.8,
+        3.4
+      ],
+      "backDirection": [
+        0,
+        0,
+        1
+      ],
+      "identityConfirmed": true,
+      "identityEvidenceRef": "synthetic:user-confirmed-identity"
+    },
+    {
+      "id": "beam-1",
+      "type": "beam",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:beam-1"
+      ],
+      "box": {
+        "center": [
+          2,
+          2.45,
+          2.5
+        ],
+        "size": [
+          0.3,
+          0.35,
+          3
+        ],
+        "yawRad": 0.2
+      }
+    },
+    {
+      "id": "door-1",
+      "type": "door",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:door-1"
+      ],
+      "surface": {
+        "center": [
+          2,
+          1,
+          0
+        ],
+        "normal": [
+          0,
+          0,
+          -1
+        ],
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "widthM": 0.9,
+        "heightM": 2
+      },
+      "reviewPoint": [
+        2,
+        1.5,
+        0.05
+      ],
+      "exterior": true,
+      "openFraction": 1
+    },
+    {
+      "id": "mirror-1",
+      "type": "mirror",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:mirror-1"
+      ],
+      "surface": {
+        "center": [
+          2,
+          1.2,
+          3.89
+        ],
+        "normal": [
+          0,
+          0,
+          -1
+        ],
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "widthM": 1,
+        "heightM": 1.4
+      }
+    },
+    {
+      "id": "wall-1",
+      "type": "wall",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:wall-1"
+      ],
+      "box": {
+        "center": [
+          2,
+          1.4,
+          3.95
+        ],
+        "size": [
+          3,
+          2.8,
+          0.1
+        ],
+        "yawRad": 0
+      },
+      "occludes": true
+    },
+    {
+      "id": "window-1",
+      "type": "window",
+      "roomIds": [
+        "room-1"
+      ],
+      "confidence": "high",
+      "evidenceRefs": [
+        "synthetic:window-1"
+      ],
+      "surface": {
+        "center": [
+          4.2,
+          1.6,
+          3.95
+        ],
+        "normal": [
+          0,
+          0,
+          1
+        ],
+        "up": [
+          0,
+          1,
+          0
+        ],
+        "widthM": 1,
+        "heightM": 1.2
+      },
+      "exterior": true,
+      "openFraction": 0.5
+    }
+  ],
+  "compass": {
+    "facingDegrees": 180,
+    "northBasis": "magnetic",
+    "uncertaintyDegrees": 2,
+    "evidenceRef": "synthetic:compass"
+  },
+  "reportScope": {
+    "airflowMode": "geometry",
+    "schools": [
+      "form",
+      "luopan"
+    ],
+    "evidenceRef": "synthetic:user-confirmed-qualitative-ventilation"
+  }
+}
