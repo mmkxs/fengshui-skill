@@ -11,7 +11,7 @@ in references/vr-confirmation.md loads via ``?agentLabels=<path>``.
     python scripts/labels.py --scene scene.json --out labels.json
     python scripts/labels.py --scene scene.json --out labels.json \
         --door obj-mirror003 --windows obj-window002,obj-window003 \
-        --desks obj-desk003 --whole-types window,door,desk,mirror
+        --desks obj-desk003 --types window,door,desk,mirror
 """
 
 from __future__ import annotations
@@ -129,7 +129,16 @@ def generate(
         kind = wanted.get(item["id"]) or (
             item.get("type") if item.get("type") in (extra_types or set()) else None
         )
-        if not kind or not item.get("box"):
+        if not kind:
+            continue
+        position = None
+        if item.get("box"):
+            position = item["box"].get("center")
+        elif item.get("surface"):
+            position = item["surface"].get("center")
+        elif item.get("reviewPoint"):
+            position = item["reviewPoint"]
+        if not position:
             continue
         counts[kind] = counts.get(kind, 0) + 1
         prefix = PREFIX.get(kind, kind[:1].upper())
@@ -137,7 +146,7 @@ def generate(
         title = f"{label} {TYPE_NAMES.get(kind, kind)}"
         entry = tag_style(title)
         entry["id"] = label
-        entry["position"] = clamp_into_room(item["box"]["center"], polygon)
+        entry["position"] = clamp_into_room(position, polygon)
         entry["sceneObjectId"] = item["id"]
         ordered.append(entry)
     return ordered
@@ -176,9 +185,7 @@ def main(argv=None):
                     {"id": item["id"], "title": item["data"]["title"], "object": item["sceneObjectId"]}
                     for item in labels
                 ],
-                "next": "把文件放到项目的 public/agent-labels/ 下，用 "
-                "?agentLabels=/agent-labels/<file>.json 打开 VR；"
-                "接入方式见 references/vr-confirmation.md",
+                "next": "此命令只导出锚点候选；确认请用 viewer_confirm.py 委托空间 skill 的统一临时确认入口。",
             },
             ensure_ascii=False,
         )

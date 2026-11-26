@@ -151,7 +151,7 @@ def collect_questions(scene, report=None):
     excluded = excluded_rules(scene)
     questions = []
 
-    def ask(key, basis, question, rules, identities=()):
+    def ask(key, basis, question, rules, identities=(), channel="viewer"):
         active = [rule for rule in rules if rule not in excluded]
         if active and not any(row["id"] == key for row in questions):
             questions.append(
@@ -161,6 +161,7 @@ def collect_questions(scene, report=None):
                     "question": question,
                     "rules": active,
                     "objectIds": list(identities),
+                    "channel": channel,
                 }
             )
 
@@ -229,6 +230,7 @@ def collect_questions(scene, report=None):
                     f"图里这个识别出来是{type_name}，对吗？它平时怎么用、放在哪？",
                     LAYOUT_RULES,
                     [oid],
+                    channel="viewer",
                 )
             if item.get("reviewPoint") is None:
                 ask(
@@ -245,6 +247,7 @@ def collect_questions(scene, report=None):
                     f"{label}的床头（或靠背）是靠哪面墙的？",
                     ["FS-BACKING"],
                     [oid],
+                    channel="viewer",
                 )
         if kind == "mirror" and (
             not item.get("surface")
@@ -256,6 +259,7 @@ def collect_questions(scene, report=None):
                 "图里这块镜子，镜面朝哪边、大概多大范围？",
                 ["FS-MIRROR", "FS-REFLECTION"],
                 [oid],
+                channel="viewer",
             )
         if kind in {"door", "window"}:
             if "exterior" not in item or item.get("openFraction") is None:
@@ -265,6 +269,7 @@ def collect_questions(scene, report=None):
                     f"{label}是通户外的吗？平时开着还是关着？",
                     ["ENV-OPENINGS"],
                     [oid],
+                    channel="viewer",
                 )
             if not item.get("surface"):
                 ask(
@@ -273,6 +278,7 @@ def collect_questions(scene, report=None):
                     f"请在截图中指出{label}的实际开口位置和范围。",
                     ["ENV-OPENINGS"] + (["FS-DOOR"] if kind == "door" else []),
                     [oid],
+                    channel="viewer",
                 )
             elif item.get("exterior") is True and item["surface"].get(
                 "normalBasis"
@@ -283,6 +289,7 @@ def collect_questions(scene, report=None):
                     f"{label}朝哪边开？哪一侧是通室外的？",
                     ["ENV-OPENINGS"],
                     [oid],
+                    channel="viewer",
                 )
     compass = scene.get("compass", {})
     schools = scene.get("reportScope", {}).get("schools", ["form", "luopan"])

@@ -122,4 +122,4 @@
 
 用户明确同意排除某项时，excludedRules 可包含 {"ruleId":"FS-REFLECTION","reason":"用户确认此房间没有床，不分析入口经镜面看向床位","evidenceRef":"用户原始回复引用"}。仅支持现有七项几何规则；未知数据不能作为自动排除理由。
 
-assess 输出 consultation.ready 和 questions，并同步 evidence.questions。问题按整个空间及具体对象汇总。还有问题时会话为 awaiting_user_input，HTML 生成入口也会重新检查。最终报告不呈现内部问答清单。
+assess 输出 consultation.ready 和 questions，并同步 evidence.questions。问题按整个空间及具体对象汇总；还有问题时会话为 awaiting_user_input。每条问题带 `channel`：`viewer` 表示可在画面里指认的事实（物品身份、门窗对外/开合、开口平面、镜面法向、床头方向），本地 Viewer 工程内须用编号标签在 VR 确认；`chat` 表示只能在对话里回答的信息（空间类型、房间用途、层高、坐向、年份等）。HTML 生成入口也会重新检查；最终报告不呈现内部问答清单。

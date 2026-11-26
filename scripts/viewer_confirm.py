@@ -1,206 +1,155 @@
 #!/usr/bin/env python3
-"""Package the in-viewer confirmation step: overlay + numbered labels + questions.
-
-Users confirm doors, windows and furniture by looking at the scene, not by
-describing orientations in chat. This command prepares everything needed for
-that single interaction:
-
-1. optionally installs a dev-only overlay module (`?agentLabels=` loader);
-2. writes numbered labels into `public/agent-labels/<RC>.json`;
-3. emits a question sheet bound to those labels and the URL to open.
-
-    python scripts/viewer_confirm.py --project . --resource-code <RC> \
-        --scene analysis-output/<RC>/fengshui/<id>/scene.json \
-        --door obj-mirror003 \
-        --windows obj-window002,obj-window003,obj-window006,obj-window007 \
-        --desks obj-desk001,obj-desk002,obj-desk003 --install
-"""
-
+"""Adapt fengshui facts to the spatial skill's temporary visual confirmation API."""
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from labels import generate, split_ids
 
-OVERLAY_PATH = "src/features/tags/AgentTagOverlay.ts"
-OVERLAY_SOURCE = '''export type AgentTagList = unknown[]
 
-export interface AgentTagLoader {
-  load(list: AgentTagList): Promise<unknown>
-}
-
-declare global {
-  interface Window {
-    __VR_AGENT_TAGS__?: { load(list: AgentTagList): Promise<unknown> }
-  }
-}
-
-/**
- * Dev-only overlay. Loads `?agentLabels=/agent-labels/<file>.json` into the
- * running scene so a reviewer can confirm numbered anchors in place.
- *
- * `loader` comes from the app's own spatial tag feature, so this module stays
- * independent of any particular viewer SDK.
- */
-export function installAgentTagOverlay(loader: AgentTagLoader) {
-  const handle = { load: (list: AgentTagList) => loader.load(list) }
-  window.__VR_AGENT_TAGS__ = handle
-  const source = new URLSearchParams(window.location.search).get('agentLabels')
-  if (source?.startsWith('/')) {
-    void fetch(source)
-      .then((response) => response.json())
-      .then((list: AgentTagList) => handle.load(list))
-      .catch((error: unknown) => console.warn('Agent 标签加载失败', error))
-  }
-  return {
-    load: handle.load,
-    dispose() {
-      if (window.__VR_AGENT_TAGS__ === handle) delete window.__VR_AGENT_TAGS__
-    },
-  }
-}
-'''
-
-APP_SNIPPET = """// 仅在开发构建启用；空间标签实例已就绪后调用
-import { installAgentTagOverlay } from './features/tags/AgentTagOverlay'
-const overlay = enable ? installAgentTagOverlay({ load: (list) => tags.load(list) }) : undefined
-// 清理时调用 overlay?.dispose()"""
+def options(*values):
+    return [{'value': value, 'label': label} for value, label in values]
 
 
-def questions_for(labels):
-    by_prefix = {}
-    for item in labels:
-        prefix = item["id"][0]
-        by_prefix.setdefault(prefix, []).append(item["id"])
-    questions = []
-    if by_prefix.get("D"):
-        questions.append(
-            {
-                "id": "door-identity",
-                "labelIds": by_prefix["D"],
-                "question": "画面里哪个编号是入户门？",
-                "field": "door",
-            }
-        )
-    if by_prefix.get("W"):
-        questions.append(
-            {
-                "id": "exterior-windows",
-                "labelIds": by_prefix["W"],
-                "question": "哪几个编号真正通向室外？（可多选）",
-                "field": "windows",
-            }
-        )
-    if by_prefix.get("T"):
-        questions.append(
-            {
-                "id": "desk-identity",
-                "labelIds": by_prefix["T"],
-                "question": "哪几个编号是平时使用的桌子，其余是什么？",
-                "field": "desks",
-            }
-        )
-    if by_prefix.get("P") or by_prefix.get("G"):
-        questions.append(
-            {
-                "id": "mirror-identity",
-                "labelIds": by_prefix.get("P", []) + by_prefix.get("G", []),
-                "question": "这些编号是镜子还是玻璃隔断？",
-                "field": "mirrors",
-            }
-        )
-    questions.append(
-        {
-            "id": "opening-state",
-            "labelIds": by_prefix.get("W", []),
-            "question": "外窗平时开着还是关着？",
-            "field": "openFraction",
-        }
-    )
-    questions.append(
-        {
-            "id": "compass",
-            "labelIds": by_prefix.get("D", []),
-            "question": "站在门口面向门外，门朝哪个方向？（可读手机指南针）",
-            "field": "compass",
-        }
-    )
-    return questions
+def requirements(resource_code):
+    kinds = {'door': '门', 'window': '窗', 'bed': '床', 'desk': '桌', 'sofa': '沙发', 'mirror': '镜子', 'beam': '梁', 'partition': '隔断'}
+    return {
+        'version': 1, 'id': 'fengshui:' + resource_code, 'workCode': resource_code,
+        'goals': ['房间用途、关键物品身份与位置', '门窗开口、对外关系与开合状态', '床头靠背、镜面法向、梁体遮挡和通风路径', '绝对方位须有用户校准依据'],
+        'facts': [{'id': 'identity:' + kind, 'kind': 'object', 'selector': kind,
+                   'prompt': f'标记物品是{label}吗？',
+                   'options': options(('yes', '是'), ('no', '不是'), ('unknown', '无法判断'))}
+                  for kind, label in kinds.items()],
+    }
+
+
+def scene_request(scene, labels, resource_code):
+    facts = []
+    by_id = {item['id']: item for item in scene.get('objects', [])}
+    for label in labels:
+        object_id = label['sceneObjectId']
+        item = by_id[object_id]
+        base = {'kind': 'object', 'position': label['position'], 'objectId': object_id}
+        facts.append({**base, 'id': 'identity:' + object_id, 'prompt': label['data']['title'] + '，识别正确吗？',
+                      'options': options(('yes', '正确'), ('no', '不正确'), ('unknown', '无法判断'))})
+        if item.get('type') in ('door', 'window'):
+            facts.append({**base, 'id': 'exterior:' + object_id, 'prompt': label['data']['title'] + '是否通室外？',
+                          'options': options(('yes', '通室外'), ('no', '通室内'), ('unknown', '无法判断'))})
+            facts.append({**base, 'id': 'openFraction:' + object_id, 'prompt': label['data']['title'] + '平时的开合状态？',
+                          'options': options(('0', '关闭'), ('0.5', '半开'), ('1', '全开'), ('unknown', '无法判断'))})
+    request = {**requirements(resource_code), 'facts': facts, 'analysisSha256': scene.get('sourceAnalysisSha256')}
+    digest = hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:16]
+    request['id'] += ':' + digest
+    return request
+
+
+def annotations(result, request):
+    if result.get('status') != 'answered' or result.get('id') != request['id'] or result.get('workCode') != request['workCode']:
+        raise ValueError('确认尚未完成清理，或会话/作品不匹配')
+    expected = {fact['id']: fact for fact in request['facts']}
+    rows = result.get('answers', [])
+    if len(rows) != len(expected) or {row.get('id') for row in rows} != set(expected):
+        raise ValueError('确认答案必须完整且无重复')
+    objects, unresolved = {}, []
+    for answer in rows:
+        fact = expected[answer['id']]
+        if answer.get('source') != 'user' or answer.get('value') not in {option['value'] for option in fact['options']}:
+            raise ValueError('确认答案没有用户来源或取值无效')
+        value = answer['value']
+        object_id = fact.get('objectId')
+        if value == 'unknown' or not object_id:
+            unresolved.append(answer['id'])
+            continue
+        field = answer['id'].split(':', 1)[0]
+        target = objects.setdefault(object_id, {'id': object_id})
+        if field == 'identity':
+            target.update(identityConfirmed=value == 'yes', identityEvidenceRef='viewer:' + request['id'])
+            if value != 'yes':
+                unresolved.append(answer['id'])
+        elif field == 'exterior':
+            target['exterior'] = value == 'yes'
+        elif field == 'openFraction':
+            target['openFraction'] = float(value)
+        else:
+            unresolved.append(answer['id'])
+    if not request.get('analysisSha256'):
+        raise ValueError('回填需要与当前 scene 绑定的 analysisSha256')
+    for item in objects.values():
+        item['evidenceRefs'] = ['viewer:' + request['id']]
+    return {'schema': 'spatial-fengshui.annotations', 'version': 1,
+            'analysisSha256': request['analysisSha256'], 'resourceCode': request['workCode'],
+            'objectUpdates': list(objects.values()), 'unresolved': unresolved}
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", default=".")
-    parser.add_argument("--resource-code", required=True)
-    parser.add_argument("--scene", required=True)
-    parser.add_argument("--door")
-    parser.add_argument("--windows")
-    parser.add_argument("--desks")
-    parser.add_argument("--types", help="额外整类型，如 mirror,beam,partition")
-    parser.add_argument("--room")
-    parser.add_argument("--install", action="store_true", help="写入 dev-only 标签入口")
-    parser.add_argument("--force", action="store_true")
-    parser.add_argument("--viewer", default="http://127.0.0.1:8087", help="Viewer 根地址")
-    parser.add_argument("--out", help="确认清单输出路径")
+    parser.add_argument('--project', default='.')
+    parser.add_argument('--resource-code', required=True)
+    parser.add_argument('--scene')
+    parser.add_argument('--request', help='空间分析前或补确认时传入的通用需求 JSON')
+    parser.add_argument('--requirements-out', help='仅导出分析前需求')
+    parser.add_argument('--answers', help='统一确认入口 read().result 的 JSON')
+    for flag in ('door', 'windows', 'desks', 'types', 'room', 'viewer', 'out'):
+        parser.add_argument('--' + flag)
+    parser.add_argument('--all', action='store_true')
+    parser.add_argument('--install', action='store_true', help='通过空间 skill 的 wire_host.py 接线')
+    parser.add_argument('--force', action='store_true', help='兼容旧调用；不覆盖 Viewer 文件')
     args = parser.parse_args(argv)
-
     project = Path(args.project).resolve()
-    scene = json.loads(Path(args.scene).read_text())
-    labels = generate(
-        scene,
-        split_ids(args.door),
-        split_ids(args.windows),
-        split_ids(args.desks),
-        split_ids(args.types),
-        args.room,
-    )
-    if not labels:
-        raise SystemExit("没有可标注的对象，请检查 --door/--windows/--desks/--types")
-
-    installed = False
-    note = None
-    overlay = project / OVERLAY_PATH
-    if args.install:
-        if overlay.exists() and not args.force:
-            note = f"标签入口已存在，未覆盖：{overlay}；需要替换时加 --force"
+    output = Path(args.out) if args.out else project / 'analysis-output' / args.resource_code / 'viewer-confirmation.json'
+    try:
+        if args.requirements_out:
+            target = Path(args.requirements_out)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(requirements(args.resource_code), ensure_ascii=False, indent=2) + '\n')
+            print(json.dumps({'ok': True, 'request': str(target)}, ensure_ascii=False))
+            return 0
+        scripts = project / '.agents/skills/realsee-spatial-analysis/scripts'
+        binder = scripts / 'analysis_request.py'
+        if not binder.is_file():
+            raise ValueError('空间确认能力未安装：更新项目内 realsee-spatial-analysis skill 后重试；本适配器不注入 overlay')
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if args.request:
+            request_path = Path(args.request)
+            request = json.loads(request_path.read_text())
+        elif args.scene:
+            scene = json.loads(Path(args.scene).read_text())
+            kinds = split_ids(args.types)
+            if args.all:
+                kinds |= {'door', 'window', 'desk', 'bed', 'sofa', 'mirror', 'partition', 'beam'}
+            labels = generate(scene, split_ids(args.door), split_ids(args.windows), split_ids(args.desks), kinds, args.room)
+            request = scene_request(scene, labels, args.resource_code)
+            request_path = output.with_name('confirmation-requirements.json')
+            request_path.write_text(json.dumps(request, ensure_ascii=False, indent=2) + '\n')
         else:
-            overlay.parent.mkdir(parents=True, exist_ok=True)
-            overlay.write_text(OVERLAY_SOURCE)
-            installed = True
-
-    label_dir = project / "public/agent-labels"
-    label_dir.mkdir(parents=True, exist_ok=True)
-    label_path = label_dir / f"{args.resource_code}.json"
-    label_path.write_text(json.dumps(labels, ensure_ascii=False, indent=1) + "\n")
-
-    open_url = f"{args.viewer.rstrip('/')}/{args.resource_code}?agentLabels=/agent-labels/{args.resource_code}.json"
-    questions = questions_for(labels)
-    result = {
-        "schema": "spatial-fengshui.viewer-confirmation",
-        "version": 1,
-        "resourceCode": args.resource_code,
-        "openUrl": open_url,
-        "labels": [
-            {"id": item["id"], "title": item["data"]["title"], "object": item["sceneObjectId"]}
-            for item in labels
-        ],
-        "questions": questions,
-        "overlay": {
-            "path": OVERLAY_PATH,
-            "installed": installed,
-            "appSnippet": APP_SNIPPET,
-            **({"note": note} if note else {}),
-        },
-        "next": "让用户打开 openUrl，按编号回答 questions；答案回填 annotations 后运行 assess。",
-    }
-    out = Path(args.out) if args.out else project / f"analysis-output/{args.resource_code}/viewer-confirmation.json"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(result, ensure_ascii=False, indent=1) + "\n")
-    print(json.dumps({"ok": True, "out": str(out), **result}, ensure_ascii=False))
-    return 0
+            raise ValueError('需要 --scene 或 --request；分析前可用 --requirements-out 导出需求')
+        if args.answers:
+            result = annotations(json.loads(Path(args.answers).read_text()), request)
+        else:
+            if args.install:
+                wire = subprocess.run([sys.executable, str(scripts / 'wire_host.py'), '--app', str(project)], capture_output=True, text=True)
+                if wire.returncode:
+                    raise ValueError('空间确认入口接线失败：' + (wire.stdout or wire.stderr))
+            bound = subprocess.run([sys.executable, str(binder), '--request', str(request_path), '--resource-code', args.resource_code], capture_output=True, text=True)
+            if bound.returncode:
+                raise ValueError(bound.stdout or bound.stderr)
+            result = json.loads(bound.stdout)
+            result['entry'] = 'window.__VR_SPATIAL_CONFIRM__'
+            result['next'] = '在已加载同作品的 Viewer 调用 entry.open(request)，用户提交后读取 entry.read().result；仅 answered 可回填。'
+            if args.viewer:
+                result['openUrl'] = args.viewer.rstrip('/') + '/' + args.resource_code
+        output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+        print(json.dumps({'ok': True, 'out': str(output), **result}, ensure_ascii=False))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print(json.dumps({'ok': False, 'error': 'SPATIAL_CONFIRMATION_BLOCKED', 'detail': str(error)}, ensure_ascii=False))
+        return 2
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     raise SystemExit(main())

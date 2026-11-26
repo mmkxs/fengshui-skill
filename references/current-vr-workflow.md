@@ -23,9 +23,9 @@ python "<skill-dir>/scripts/workflow.py" plan \
 
 用户提出风水、堪舆或同类格局分析诉求时，向用户展示返回的 `question`，默认文案如下。
 
-> 可以。为了结合实际空间分析风水格局，需要先完整解析当前 VR，了解朝向、房间布局、主要物品的位置和通风条件，再给出图解结论与改善建议。是否授权开始完整解析？
+> 你可以选推荐方案或简版方案。我推荐先完整解析当前空间的物品和格局，确认关键事实后给出改善建议；没有本地数据时通过 API 补齐，涉及费用先确认。简版方案请提供户型图、朝向和房间用途，我给出常规布局建议。你选择哪种？
 
-等待用户明确回复。原始分析请求只触发该确认，不能自行替用户批准。用户同意这条明确的完整档请求后，本次已同时确认 full 档，无需重复发起精简/完整选档问题。完整档缺数据时报告缺项，继续沿用空间 Skill 的补数据与单独计费授权规则。
+等待用户明确选择。原始分析请求只触发方案选择，不能自行替用户批准。选择推荐方案后，用 authorize --scheme recommended 记录回复，本次已同时确认 full 档，无需重复选档；无本地数据时优先 API 补齐。选择简版方案后，用 authorize --scheme simple 记录回复，进入 awaiting_simple_inputs，收集户型图、朝向和房间用途，不启动完整空间解析。完整档的 API 新建任务单独确认费用。
 
 将用户回复原文和本次 requestSha256 记录在同一会话。
 
@@ -48,7 +48,9 @@ python "<skill-dir>/scripts/workflow.py" run \
   --python "<已发现的 Python 3.12 解释器>"
 ```
 
-该入口调用同级空间 Skill，经项目 BFF 获取当前 Work 快照，保存到本次任务 inputs 中，随后使用 `pipeline.py all --inputs full --no-apply --yes`。初次明确授权已覆盖本机必要素材、依赖和权重下载，付费 API 提交另行确认。仅为报告解析数据时使用 no-apply，保留当前应用的开发范围。
+该入口优先调用项目安装的空间 skill，独立使用时寻找同级模块。经项目 BFF 获取当前 Work 快照并保存到本次任务 inputs 中，随后使用 `pipeline.py all --inputs full --no-apply --yes`。选择推荐方案的明确授权覆盖本机必要素材、依赖和权重下载；API 计费提交另行确认。仅为报告解析数据时使用 no-apply，保留当前应用的开发范围。
+
+在 vr-cli 项目中优先使用项目安装的空间 skill，同级模块作为独立使用时的后备。当前页面的本机端口会传给空间预检，也可用 `workflow.py run --base-url` 指定。full 档缺数据时自动查询 API 补齐计划；空间侧负责临时回环下载 BFF 的启动和清理，风水侧不改生产服务的路由。状态分别为 `awaiting_billing_confirmation`（等本次费用确认）、`awaiting_download_confirmation`（等下载清单确认）、`needs_environment`（下载入口不可用）和 `needs_data`（其他数据/任务问题），不可一概转成精简选档。用户明确确认本次计费计划后，使用相同 session 重跑 `workflow.py run ... --confirm-billing`；确认前不能传该开关。
 
 当前应用使用浏览器登录态或访问 Cookie、导致本机脚本无法直接请求 BFF 时，授权后可在同一页面通过同源 fetch 获取 Work。前后核对资源码与 generation，保存 `spatial-fengshui.browser-snapshot`，字段包括 context、requestSha256 与 envelope，再用 `workflow.py run --browser-work <快照文件>`。URL 固定为该页面同源 `/api/work/<当前资源码>`，保留原有服务端鉴权。不能导出浏览器凭据或改请求到其他空间。
 
@@ -66,14 +68,25 @@ python "<skill-dir>/scripts/workflow.py" assess \
 
 ## 确认空间类型、房间用途与物品身份
 
-生成 `scene.json` 后、下任何风水结论前，先按顺序把下面几类问清楚。检测标签（bed、sofa、desk 等）只是候选身份，不是事实；`spaceType` 与房间 `function` 默认 unknown。本地 Viewer 工程内先用 `python scripts/labels.py --scene scene.json --out labels.json` 生成编号标签，让用户在 VR 里对着编号回答，不要用坐标轴或平面图让人描述方位（接入方式与坑见 vr-confirmation.md）。其余情况逐条提问并等待明确回复：
+生成 `scene.json` 后、下任何风水结论前，先按顺序把下面几类问清楚。检测标签（bed、sofa、desk 等）只是候选身份，不是事实；`spaceType` 与房间 `function` 默认 unknown。
+
+本地 Viewer 工程内，凡能在画面里指认的事实一律用编号标签在 VR 里确认，不要改写成对话选择题：
+
+```bash
+python "<skill-dir>/scripts/viewer_confirm.py" --project . --resource-code <RC> \
+  --scene "<scene.json>" --all --install
+```
+
+将返回 `request` 交给空间侧 `window.__VR_SPATIAL_CONFIRM__.open(request)`，用户在可视化界面逐项提交后读取 `read().result`。物品用临时标签，方位用 GuideLine；只在完成清理且结果为 answered 时回填。缺入口或候选时明确阻塞。风水侧不维护 Viewer overlay。分析前以 `--requirements-out` 导出目标和事实，传给空间侧 `--analysis-request`。
+
+下列上下文信息也绑定房间或参考点，在可视化确认界面中收集：
 
 1. 整个空间是什么类型？办公室 / 住宅 / 商场 / 工厂 / 其他（`spaceType`）。
 2. 每个房间的用途：`room-1（示例卧室）` 实际是卧室 / 客厅 / 办公 / 厨房 / 卫浴 / 走廊 / 其他？
-3. 每个停留区物品：`bed-1`（检测为床，可信度 high）实际是什么？
-4. 依据缺失项：读取本次 `fengshui-analysis.json` 的 `consultation.questions`，合并同类问题后向用户提问并等待明确回复。其中坐向/朝向、入户门、层高、门窗开合等无法从模型直接推导的，直接请用户给出，不要只标记缺失。
+3. 坐向与参考北、测量误差、层高、建成或大修年份、宅卦/命卦口径。
+4. 现场看不到的遮挡或未建模物体。
 
-把用户回复写成补充标注，绑定本次 analysisSha256，再重跑 assess：
+`consultation.questions` 默认 `channel: "viewer"`。将每条问题转换成通用确认 fact，补齐空间锚点及准确选项；需要精确几何时先补测量/候选。确认结果写成补充标注，绑定本次 analysisSha256，再重跑 assess：
 
 ```json
 {

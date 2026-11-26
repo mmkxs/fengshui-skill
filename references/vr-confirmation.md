@@ -10,28 +10,22 @@
 ```bash
 python scripts/viewer_confirm.py --project . --resource-code <RC> \
   --scene analysis-output/<RC>/fengshui/<id>/scene.json \
-  --door <门ID> --windows <窗ID列表> --desks <桌ID列表> --types mirror --install
+  --all --install
 ```
 
-输出里的 `openUrl` 直接发给用户，`questions` 是按编号组织的问题，`overlay` 给出 dev-only 入口的位置和 App 侧调用片段。需要了解底层物料时，再按下面的分步流程生成标签：
+`--all` 为门、窗、桌、床、沙发、镜子、隔断与梁体生成确认事实；需要子集时用 `--door/--windows/--desks/--types`。输出 `request` 交给空间 skill 的 `window.__VR_SPATIAL_CONFIRM__.open(request)`，用户在场景旁表单提交后读取 `read().result`。只有 `answered` 才能回填；所有分析信息均在可视化界面中确认，坐向使用起终点明确的 GuideLine。`--install` 委托空间侧 wire_host.py，不注入 overlay。
 
-1. 生成编号标签：
+1. 分析前导出目标和待确认事实：
 
    ```bash
-   python scripts/labels.py --scene analysis-output/<RC>/fengshui/<id>/scene.json \
-     --out public/agent-labels/<RC>.json \
-     --door <门物品ID> --windows <窗ID列表> --desks <桌ID列表> --types mirror
+   python scripts/viewer_confirm.py --resource-code <RC> --requirements-out <需求.json>
    ```
 
-   标签按 `D/W/P/T` 编号，位置自动收进房间多边形；`visibleFiveMode` 已设为 `all`。
+   按本次任务补充 facts，交给空间侧 `pipeline.py all --analysis-request <需求.json> ...`。消费方声明需求，空间侧执行适用分析并绑定真实候选。
 
-2. 在项目里加一个仅开发构建生效的加载入口。`viewer_confirm.py --install` 会写入
-   `src/features/tags/AgentTagOverlay.ts`：它只依赖传入的 `loader.load(list)`，不绑定具体
-   空间 SDK。在空间与标签实例就绪后调用 `installAgentTagOverlay({ load: (list) => tags.load(list) })`，
-   清理时调用返回值的 `dispose()`。
+2. 通过空间 skill 绑定候选并打开统一确认入口。缺候选、缺入口或定位失败时明确阻塞，先补分析或接线。物品临时标签、方向线以及会话清理由空间侧统一管理，完成、取消、刷新或异常都清理，不复用持久标签列表。
 
-3. 让用户打开 `http://<host>/<RC>?agentLabels=/agent-labels/<RC>.json`，按画面里的编号回答：
-   “D 是不是入户门”“哪些 W 通户外”“门朝哪边”。**不要**要求用户描述坐标轴或方位角换算。
+3. 用 `viewer_confirm.py --scene <scene.json> --resource-code <RC> --answers <result.json> --out <annotations.json>` 回填对象标注。脚本核对会话、作品、用户来源和完整答案；未知或否认的身份保留 unresolved。精确方位、房间用途等其他 facts 由消费方按 fact id 映射到当前 annotations，禁止猜测。不要再使用 `AgentTagOverlay`、`__VR_AGENT_TAGS__` 或 `agentLabels` URL。
 
 ### 会踩的坑
 

@@ -24,6 +24,15 @@ from scene import annotate, from_analysis, load
 SCOPE = "full-space-fengshui-html-pdf"
 
 
+def scheme_options():
+    return [
+        {'id': 'recommended', 'recommended': True, 'label': '推荐方案：完整空间解析',
+         'description': '先分析三维空间的物品与格局，再可视化确认关键事实并给出改善建议；缺数据通过 API 补齐，计费提交单独确认。'},
+        {'id': 'simple', 'recommended': False, 'label': '简版方案：户型图与朝向',
+         'description': '提供户型图、朝向和房间用途等资料，得到常规布局建议；说明未基于完整三维空间解析。'},
+    ]
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -105,9 +114,10 @@ def begin(project, context):
     )
     directory.mkdir(parents=True, mode=0o700)
     question = (
-        "风水判断要落到具体位置，需要先对这个空间做一次完整解析，"
-        "了解朝向、房间布局、主要物品位置、层高、梁体门窗和通风条件，"
-        "再给出图解结论与改善建议；只凭户型图只能给方向性意见。是否授权开始完整解析？"
+        "你可以选推荐方案或简版方案。推荐方案先完整解析空间的物品、格局、"
+        "朝向、层高、门窗与遮挡，确认关键事实后给出改善建议；本地没有准备好的数据时，"
+        "通过 API 补齐（计费提交前确认）。简版方案请提供户型图、朝向和房间用途，"
+        "给出常规布局建议。你选择哪种方案？"
     )
     request = {
         "scope": SCOPE,
@@ -115,6 +125,7 @@ def begin(project, context):
         "context": context,
         "project": str(project),
         "question": question,
+        "options": scheme_options(),
         "inputs": "full",
         "normalDownloads": True,
         "localScreenshots": True,
@@ -129,7 +140,7 @@ def begin(project, context):
         "createdAt": now(),
         "request": request,
         "requestSha256": digest(request),
-        "status": "awaiting_authorization",
+        "status": "awaiting_scheme_choice",
     }
     path = directory / "session.json"
     atomic_json(path, state)
@@ -169,18 +180,26 @@ def checked_session(path, context=None, approved=True):
     return state
 
 
-def authorize(path, context, request_sha, reply, granted):
+def authorize(path, context, request_sha, reply, granted, scheme='recommended'):
     state = checked_session(path, context, approved=False)
     if request_sha != state["requestSha256"] or not reply.strip():
         raise ValueError("需要本次授权请求哈希与用户的明确回复原文")
+    if scheme not in {'recommended', 'simple'}:
+        raise ValueError('请选择 recommended 或 simple')
     state["authorization"] = {
         "actor": "user",
-        "decision": "approved" if granted else "denied",
+        "decision": ('approved' if scheme == 'recommended' else 'simple-selected') if granted else 'denied',
         "requestSha256": request_sha,
         "userReply": reply,
         "recordedAt": now(),
     }
     state["status"] = "authorized" if granted else "denied"
+    if granted:
+        state['selectedScheme'] = scheme
+        state.pop('simpleInputsRequired', None)
+        if scheme == 'simple':
+            state['status'] = 'awaiting_simple_inputs'
+            state['simpleInputsRequired'] = ['户型图', '朝向及其依据', '房间用途', '关心的问题或希望改善的位置']
     atomic_json(path, state)
     return state
 
@@ -220,7 +239,11 @@ def optional_download_lock(session_path):
         return local_lock()
 
 
-def companion():
+def companion(project=None):
+    if project is not None:
+        installed = Path(project) / '.agents/skills/realsee-spatial-analysis/scripts'
+        if (Path(project) / '.vr-cli.json').is_file() and (installed / 'pipeline.py').is_file():
+            return installed
     directory = Path(__file__).resolve().parents[2] / "realsee-spatial-analysis/scripts"
     if not (directory / "pipeline.py").is_file():
         raise ValueError(
@@ -252,11 +275,21 @@ def run_command(command, cwd, logfile):
     return result.returncode, payload
 
 
-def run_spatial(path, context, python, browser_work=None):
+def spatial_pause_status(payload):
+    if (payload.get('billingConfirmation') or {}).get('required'):
+        return 'awaiting_billing_confirmation'
+    if payload.get('error') == 'API_DOWNLOAD_UNAVAILABLE':
+        return 'needs_environment'
+    if payload.get('awaitingConfirmation'):
+        return 'awaiting_download_confirmation'
+    return 'needs_data'
+
+
+def run_spatial(path, context, python, browser_work=None, confirm_billing=False, base_url=None):
     state = checked_session(path, context)
     project = Path(state["request"]["project"])
     code = context["resourceCode"]
-    scripts = companion()
+    scripts = companion(project)
     workspace = project / "analysis-output" / code
     work = Path(path).resolve().parent / "inputs" / "work.json"
     directory = Path(path).resolve().parent
@@ -333,10 +366,18 @@ def run_spatial(path, context, python, browser_work=None):
             )
             atomic_json(path, state)
             return state
+    from viewer_confirm import requirements
+    if not (scripts / 'analysis_request.py').is_file():
+        raise ValueError('空间 skill 缺少外部需求契约，请更新后再运行完整分析')
+    requirements_path = directory / 'spatial-requirements.json'
+    if not requirements_path.exists():
+        atomic_json(requirements_path, requirements(code))
     command = [
         python,
         str(scripts / "pipeline.py"),
         "all",
+        "--analysis-request",
+        str(requirements_path),
         "--resource-code",
         code,
         "--inputs",
@@ -350,6 +391,13 @@ def run_spatial(path, context, python, browser_work=None):
         "--no-apply",
         "--yes",
     ]
+    origin = urlsplit(context['pageUrl'])
+    if base_url:
+        command += ['--base-url', base_url]
+    elif origin.hostname in {'127.0.0.1', 'localhost', '::1'}:
+        command += ['--base-url', urlunsplit((origin.scheme, origin.netloc, '', '', ''))]
+    if confirm_billing:
+        command.append('--confirm-billing')
     exit_code, payload = run_command(command, project, directory / "spatial.log")
     if (
         exit_code
@@ -360,7 +408,7 @@ def run_spatial(path, context, python, browser_work=None):
         or payload.get("billingConfirmation")
     ):
         state.update(
-            status="needs_data",
+            status=spatial_pause_status(payload),
             blocked={"stage": "spatial", "exitCode": exit_code, "result": payload},
         )
         atomic_json(path, state)
@@ -609,6 +657,9 @@ def require_current_analysis(state):
     if state.get("fullAnalysisExecuted") is not True or state.get("status") in {
         "spatial_running",
         "needs_data",
+        "needs_environment",
+        "awaiting_billing_confirmation",
+        "awaiting_download_confirmation",
     }:
         raise ValueError("尚未完成本次完整空间解析；失败或待补数据的任务不能复用旧结果")
 
@@ -832,12 +883,15 @@ def main(argv=None):
     approval.add_argument("--request-sha256", required=True)
     approval.add_argument("--user-reply", required=True)
     approval.add_argument("--decision", choices=["approve", "deny"], required=True)
+    approval.add_argument('--scheme', choices=['recommended', 'simple'], default='recommended')
     for name in ["run", "assess"]:
         command = sub.add_parser(name)
         command.add_argument("--session", required=True)
         command.add_argument("--context", required=True)
         if name == "run":
             command.add_argument("--python", default=sys.executable)
+            command.add_argument('--base-url', help='本机下载 BFF 地址；默认使用当前页面同源入口')
+            command.add_argument('--confirm-billing', action='store_true', help='用户明确确认本次下载计划的计费后使用')
             command.add_argument(
                 "--browser-work", help="当前浏览器从同源 BFF 获取并绑定授权的 Work 快照"
             )
@@ -869,7 +923,9 @@ def main(argv=None):
             print(
                 json.dumps(
                     {
-                        "mode": "authorize",
+                        "mode": "choose-scheme",
+                        "awaitingChoice": True,
+                        "options": state['request']['options'],
                         "session": str(path),
                         "question": state["request"]["question"],
                         "requestSha256": state["requestSha256"],
@@ -886,10 +942,12 @@ def main(argv=None):
                     args.request_sha256,
                     args.user_reply,
                     args.decision == "approve",
+                    args.scheme,
                 )
             elif args.command == "run":
                 state = run_spatial(
-                    args.session, context, args.python, args.browser_work
+                    args.session, context, args.python, args.browser_work,
+                    args.confirm_billing, args.base_url
                 )
             elif args.command == "assess":
                 state = assess(args.session, context, args.annotations)
