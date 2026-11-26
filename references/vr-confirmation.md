@@ -67,9 +67,11 @@ node scripts/vr_capture.mjs \
 
 - 每条 note 必须对应本次 `findings` 里的 `(ruleId, objectIds)`，且同一项只能写一次。
 - `reportScope.excludedRules` 中的规则不会出现在报告 findings 里，给它们写 note 会报
-  “解读条目没有对应的本次几何核查项”。把排除原因写进 `summary`。
+  “解读条目没有对应的本次几何核查项”。排除原因只保留在 `reportScope` 等内部记录中，
+  不写进面向读者的 `summary` 或报告正文。
 - 非 draft 报告里，note 引用的截图必须覆盖 note 的全部 `objectIds`（房间可代替房间内物品）。
-- 候选（status=`candidate`）必须都有 note；`not_observed`、`limited` 可以只在 summary 里说明。
+- 候选（status=`candidate`）必须都有 note；`not_observed`、`limited` 只保留在内部结果中，
+  不写进面向读者的 `summary` 或报告正文。
 
 ## 5. 开口与标注的最小集
 

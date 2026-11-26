@@ -168,7 +168,7 @@ Agent 结合本次空间结果、逐项截图与传统参考，写出解释和�
 
 保存 `spatial-fengshui.interpretation` version 1，包含 resourceCode、sceneFingerprint、summary、methods 和 notes；可通过 focusObjectIds 显式补充正文涉及的关键物品。每条 note 对应现有 ruleId + objectIds，可提供 title（读者可懂的结论标题）和 group（同一改善主题的分组），包含 analysis（传统分析）、practicalImpact（实际空间影响）、improvements（建议列表）、priority（high/medium/low）与 evidenceRefs。证据引用使用本次截图 E1/E2 等编号或实际几何 evidenceRefs。每个布局候选须有对应解读及建议。同一镜子的多条反射关系等相关项目使用同一个 group，合并为一段结论、一组建议与一张关系图，不按机器对象对重复堆页。
 
-缺少宅运、坐向、镜面方向或空气工况时，在生成前先向用户询问并等待答复，不能在最终报告里罗列缺项。用户确认不分析某项时，将 ruleId、reason 和 evidenceRef 写入 reportScope.excludedRules；仅分析明确约定的范围。流派选择记录在 reportScope.schools 中，不将未选择的流派写成“缺少输入”。涉及具体搬动位置时，用场景几何核对新位置的门扇、通道、梁体和镜面关系，方案图注明为改善设想。
+缺少宅运、坐向、镜面方向或空气工况时，在生成前先向用户询问并等待答复，不能在最终报告里罗列缺项。用户确认不分析某项时，将 ruleId、reason 和 evidenceRef 写入 reportScope.excludedRules，只保留为内部记录；仅分析明确约定的范围。流派选择记录在 reportScope.schools 中，不将未选择的流派写成“缺少输入”。涉及具体搬动位置时，用场景几何核对新位置的门扇、通道、梁体和镜面关系，方案图注明为改善设想。
 
 ## 生成 HTML 报告
 
@@ -183,7 +183,7 @@ python "<skill-dir>/scripts/report.py" \
 
 生成前重新检查 consultation。还有影响结论的未知项时，入口保存 consultation.json，状态为 awaiting_user_input，不生成正式 HTML。助手先从空间素材补齐能识别的数据，剩余信息用截图和自然语言位置向用户提问；回填后运行 assess。不得删除 unknown 结果或擅自改 reportScope 绕过缺项。
 
-HTML 只包含总体判断、优先建议、空间图解、对应实景、各项分析结论与可执行改善建议。所有解读应指明房间和具体位置，解释为什么需要调整、怎么调整；没有问题的关系可简洁说明维持现状。使用 title 为建议命名，正文用“入口右侧镜子”“窗边书桌”等可辨识称呼。脚本将已知内部对象 ID 转为自然语言名称，但 Agent 仍须检查指代与截图对应。
+HTML 只包含总体判断、优先建议、空间图解、对应实景、各项分析结论与可执行改善建议。所有解读应指明房间和具体位置，解释为什么需要调整、怎么调整。只写确实影响使用、并且需要调整的关系；没有问题的关系、未成立的担忧、排除项和检测误报不写进报告，保留在内部分析记录中。使用 title 为建议命名，正文用“入口右侧镜子”“窗边书桌”等可辨识称呼。脚本将已知内部对象 ID 转为自然语言名称，但 Agent 仍须检查指代与截图对应。
 
 对象编号、校验状态、候选计数、逐对关系矩阵、坐标、哈希、原始测量表、授权回执和缺项清单保留在内部 JSON，不展示给读者。只在理解结论所需时，直接用自然语言解释尺寸或距离，不堆数字。
 
